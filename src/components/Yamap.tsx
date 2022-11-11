@@ -12,28 +12,15 @@ import {
 // @ts-ignore
 import resolveAssetSource from 'react-native/Libraries/Image/resolveAssetSource';
 import CallbacksManager from '../utils/CallbacksManager';
-import {
-  Point,
-  ScreenPoint,
-  DrivingInfo,
-  MasstransitInfo,
-  RoutesFoundEvent,
-  Vehicles,
-  CameraPosition,
-  VisibleRegion,
-  InitialRegion,
-  MapType,
-  Animation,
-  MapLoaded,
-  YandexLogo
-} from '../interfaces';
+import { Point, ScreenPoint, DrivingInfo, MasstransitInfo, RoutesFoundEvent, Vehicles, CameraPosition, VisibleRegion, InitialRegion, MapType, Animation, MapLoaded } from '../interfaces';
 import { processColorProps } from '../utils';
 
 const { yamap: NativeYamapModule } = NativeModules;
 
 export interface YaMapProps extends ViewProps {
   userLocationIcon?: ImageSourcePropType;
-  userLocationIconScale?: number;
+  withClusters?: boolean;
+  clusterColor?: string;
   showUserPosition?: boolean;
   nightMode?: boolean;
   mapStyle?: string;
@@ -53,8 +40,6 @@ export interface YaMapProps extends ViewProps {
   fastTapEnabled?: boolean;
   initialRegion?: InitialRegion;
   maxFps?: number;
-  followUser?: boolean;
-  logoPosition?: YandexLogo;
 }
 
 const YaMapNativeComponent = requireNativeComponent<YaMapProps>('YamapView');

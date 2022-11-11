@@ -8,7 +8,6 @@ export interface MarkerProps {
   children?: React.ReactElement;
   zIndex?: number;
   scale?: number;
-  rotated?: boolean;
   onPress?: () => void;
   point: Point;
   source?: ImageSourcePropType;
@@ -24,10 +23,6 @@ interface State {
 }
 
 export class Marker extends React.Component<MarkerProps, State> {
-  static defaultProps = {
-    rotated: false,
-  };
-
   state = {
     recreateKey: false,
     children: this.props.children

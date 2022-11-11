@@ -2,8 +2,9 @@ package ru.vvdev.yamap.view;
 
 import android.content.Context;
 import android.graphics.Bitmap;
+import android.graphics.Canvas;
 import android.graphics.Color;
-import android.graphics.PointF;
+import android.graphics.Paint;
 import android.view.View;
 
 import androidx.annotation.NonNull;
@@ -39,8 +40,10 @@ import com.yandex.mapkit.map.MapLoadedListener;
 import com.yandex.mapkit.map.CameraPosition;
 import com.yandex.mapkit.map.CameraUpdateReason;
 import com.yandex.mapkit.map.CircleMapObject;
+import com.yandex.mapkit.map.Cluster;
+import com.yandex.mapkit.map.ClusterListener;
+import com.yandex.mapkit.map.ClusterTapListener;
 import com.yandex.mapkit.map.ClusterizedPlacemarkCollection;
-import com.yandex.mapkit.map.IconStyle;
 import com.yandex.mapkit.map.InputListener;
 import com.yandex.mapkit.map.MapObject;
 import com.yandex.mapkit.map.PlacemarkMapObject;
@@ -49,9 +52,6 @@ import com.yandex.mapkit.map.PolylineMapObject;
 import com.yandex.mapkit.map.VisibleRegion;
 import com.yandex.mapkit.map.MapType;
 import com.yandex.mapkit.mapview.MapView;
-import com.yandex.mapkit.logo.Alignment;
-import com.yandex.mapkit.logo.HorizontalAlignment;
-import com.yandex.mapkit.logo.VerticalAlignment;
 import com.yandex.mapkit.transport.TransportFactory;
 import com.yandex.mapkit.transport.masstransit.FilterVehicleTypes;
 import com.yandex.mapkit.transport.masstransit.MasstransitRouter;
@@ -78,7 +78,6 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
@@ -88,7 +87,7 @@ import ru.vvdev.yamap.utils.Callback;
 import ru.vvdev.yamap.utils.ImageLoader;
 import ru.vvdev.yamap.utils.RouteManager;
 
-public class YamapView extends MapView implements UserLocationObjectListener, CameraListener, InputListener, TrafficListener, MapLoadedListener {
+public class YamapView extends MapView implements UserLocationObjectListener, CameraListener, InputListener, TrafficListener, ClusterListener, ClusterTapListener, MapLoadedListener {
     private final static Map<String, String> DEFAULT_VEHICLE_COLORS = new HashMap<String, String>() {{
         put("bus", "#59ACFF");
         put("railway", "#F8634F");
@@ -99,7 +98,8 @@ public class YamapView extends MapView implements UserLocationObjectListener, Ca
         put("walk", "#333333");
     }};
     private String userLocationIcon = "";
-    private float userLocationIconScale = 1.f;
+    private Boolean userClusters = false;
+    private int clusterColor = 0;
     private Bitmap userLocationBitmap = null;
     private RouteManager routeMng = new RouteManager();
     private MasstransitRouter masstransitRouter = TransportFactory.getInstance().createMasstransitRouter();
@@ -112,30 +112,6 @@ public class YamapView extends MapView implements UserLocationObjectListener, Ca
     private float userLocationAccuracyStrokeWidth = 0.f;
     private TrafficLayer trafficLayer = null;
     private float maxFps = 60;
-    static private HashMap<String, ImageProvider> icons = new HashMap<>();
-
-    void setImage(final String iconSource, final PlacemarkMapObject mapObject, final IconStyle iconStyle) {
-        if (icons.get(iconSource)==null) {
-            ImageLoader.DownloadImageBitmap(getContext(), iconSource, new Callback<Bitmap>() {
-                @Override
-                public void invoke(Bitmap bitmap) {
-                    try {
-                        if (mapObject != null) {
-                            ImageProvider icon = ImageProvider.fromBitmap(bitmap);
-                            icons.put(iconSource, icon);
-                            mapObject.setIcon(icon);
-                            mapObject.setIconStyle(iconStyle);
-                        }
-                    } catch (Exception e) {
-                        e.printStackTrace();
-                    }
-                }
-            });
-        } else {
-            mapObject.setIcon(Objects.requireNonNull(icons.get(iconSource)));
-            mapObject.setIconStyle(iconStyle);
-        }
-    }
 
     private UserLocationView userLocationView = null;
 
@@ -143,6 +119,7 @@ public class YamapView extends MapView implements UserLocationObjectListener, Ca
         super(context);
         DirectionsFactory.initialize(context);
         drivingRouter = DirectionsFactory.getInstance().createDrivingRouter();
+        clusterCollection = getMap().getMapObjects().addClusterizedPlacemarkCollection(this);
         getMap().addCameraListener(this);
         getMap().addInputListener(this);
         getMap().setMapLoadedListener(this);
@@ -375,7 +352,17 @@ public class YamapView extends MapView implements UserLocationObjectListener, Ca
         return points;
     }
 
-    BoundingBox calculateBoundingBox(ArrayList<Point> points) {
+    public void fitMarkers(ArrayList<Point> points) {
+        if (points.size() == 0) {
+            return;
+        }
+
+        if (points.size() == 1) {
+            Point center = new Point(points.get(0).getLatitude(), points.get(0).getLongitude());
+            getMap().move(new CameraPosition(center, 15, 0, 0));
+            return;
+        }
+
         double minLon = points.get(0).getLongitude();
         double maxLon = points.get(0).getLongitude();
         double minLat = points.get(0).getLatitude();
@@ -403,19 +390,7 @@ public class YamapView extends MapView implements UserLocationObjectListener, Ca
         Point northEast = new Point(maxLat, maxLon);
 
         BoundingBox boundingBox = new BoundingBox(southWest, northEast);
-        return boundingBox;
-    }
-
-    public void fitMarkers(ArrayList<Point> points) {
-        if (points.size() == 0) {
-            return;
-        }
-        if (points.size() == 1) {
-            Point center = new Point(points.get(0).getLatitude(), points.get(0).getLongitude());
-            getMap().move(new CameraPosition(center, 15, 0, 0));
-            return;
-        }
-        CameraPosition cameraPosition = getMap().cameraPosition(calculateBoundingBox(points));
+        CameraPosition cameraPosition = getMap().cameraPosition(boundingBox);
         cameraPosition = new CameraPosition(cameraPosition.getTarget(), cameraPosition.getZoom() - 0.8f, cameraPosition.getAzimuth(), cameraPosition.getTilt());
         getMap().move(cameraPosition, new Animation(Animation.Type.SMOOTH, 0.7f), null);
     }
@@ -435,9 +410,14 @@ public class YamapView extends MapView implements UserLocationObjectListener, Ca
         });
     }
 
-    public void setUserLocationIconScale(float scale) {
-        userLocationIconScale = scale;
-        updateUserLocationIcon();
+    public void setClusters(final Boolean with) {
+        userClusters = with;
+        updateUserMarkers();
+    }
+
+    public void setClustersColor(int color) {
+        clusterColor = color;
+        updateUserMarkersColor();
     }
 
     public void setUserLocationAccuracyFillColor(int color) {
@@ -479,7 +459,7 @@ public class YamapView extends MapView implements UserLocationObjectListener, Ca
         }
     }
 
-    public void setInitialRegion(@Nullable ReadableMap params) {
+    public void setInitialRegion (@Nullable ReadableMap params) {
         if ((!params.hasKey("lat") || params.isNull("lat")) || (!params.hasKey("lon") && params.isNull("lon")))
             return;
 
@@ -499,39 +479,6 @@ public class YamapView extends MapView implements UserLocationObjectListener, Ca
         Point initialPosition = new Point(params.getDouble("lat"), params.getDouble("lon"));
         CameraPosition initialCameraPosition = new CameraPosition(initialPosition, initialRegionZoom, initialRegionAzimuth, initialRegionTilt);
         setCenter(initialCameraPosition, 0.f, 0);
-    }
-
-    public void setLogoPosition(@Nullable ReadableMap params) {
-        HorizontalAlignment horizontalAlignment = HorizontalAlignment.RIGHT;
-        VerticalAlignment verticalAlignment = VerticalAlignment.BOTTOM;
-
-        if (params.hasKey("horizontal") && !params.isNull("horizontal")) {
-            switch (params.getString("horizontal")) {
-                case "left":
-                    horizontalAlignment = HorizontalAlignment.LEFT;
-                    break;
-
-                case "center":
-                    horizontalAlignment = HorizontalAlignment.CENTER;
-                    break;
-
-                default:
-                    break;
-            }
-        }
-
-        if (params.hasKey("vertical") && !params.isNull("vertical")) {
-            switch (params.getString("vertical")) {
-                case "top":
-                    verticalAlignment = VerticalAlignment.TOP;
-                    break;
-
-                default:
-                    break;
-            }
-        }
-
-        getMap().getLogo().setAlignment(new Alignment(horizontalAlignment, verticalAlignment));
     }
 
     public void setMaxFps(float fps) {
@@ -594,22 +541,6 @@ public class YamapView extends MapView implements UserLocationObjectListener, Ca
             userLocationLayer.setVisible(false);
             userLocationLayer.setHeadingEnabled(false);
             userLocationLayer.setObjectListener(null);
-        }
-    }
-
-    public void setFollowUser(Boolean follow) {
-        if (userLocationLayer == null) {
-        setShowUserPosition(true);
-        }
-
-        if(follow){
-        userLocationLayer.setAutoZoomEnabled(true);
-        userLocationLayer.setAnchor(
-            new PointF((float)(getWidth() * 0.5), (float)(getHeight() * 0.5)),
-            new PointF((float)(getWidth() * 0.5), (float)(getHeight() * 0.83)));
-        }else{
-        userLocationLayer.setAutoZoomEnabled(false);
-        userLocationLayer.resetAnchor();
         }
     }
 
@@ -766,8 +697,14 @@ public class YamapView extends MapView implements UserLocationObjectListener, Ca
             _child.setMapObject(obj);
         } else if (child instanceof YamapMarker) {
             YamapMarker _child = (YamapMarker) child;
-            PlacemarkMapObject obj = getMap().getMapObjects().addPlacemark(_child.point);
-            _child.setMapObject(obj);
+            if (userClusters) {
+                PlacemarkMapObject obj = clusterCollection.addPlacemark(_child.point);
+                _child.setMapObject(obj);
+                clusterCollection.clusterPlacemarks(50, 12);
+            } else {
+                PlacemarkMapObject obj = getMap().getMapObjects().addPlacemark(_child.point);
+                _child.setMapObject(obj);
+            }
         } else if (child instanceof YamapCircle) {
             YamapCircle _child = (YamapCircle) child;
             CircleMapObject obj = getMap().getMapObjects().addCircle(_child.circle, 0, 0.f, 0);
@@ -779,10 +716,15 @@ public class YamapView extends MapView implements UserLocationObjectListener, Ca
         if (getChildAt(index) instanceof ReactMapObject) {
             final ReactMapObject child = (ReactMapObject) getChildAt(index);
             if (child == null) return;
-            final MapObject mapObject = child.getMapObject();
-            if (mapObject == null || !mapObject.isValid()) return;
 
-            getMap().getMapObjects().remove(mapObject);
+            if (userClusters) {
+                clusterCollection.remove(child.getMapObject());
+            } else {
+                final MapObject mapObject = child.getMapObject();
+                if (mapObject == null || !mapObject.isValid()) return;
+
+                getMap().getMapObjects().remove(mapObject);
+            }
         }
     }
 
@@ -803,16 +745,52 @@ public class YamapView extends MapView implements UserLocationObjectListener, Ca
         updateUserLocationIcon();
     }
 
+    private void updateUserMarkers() {
+        ArrayList<YamapMarker> lastKnownMarkers = new ArrayList<>();
+        for (int i = 0; i < getChildCount(); ++i) {
+            View obj = getChildAt(i);
+            if (obj instanceof YamapMarker) {
+                YamapMarker marker = (YamapMarker) obj;
+                lastKnownMarkers.add((YamapMarker) obj);
+
+                if (!userClusters) {
+                    clusterCollection.remove(marker.getMapObject());
+                } else {
+                    getMap().getMapObjects().remove(marker.getMapObject());
+                }
+                --i;
+            }
+        }
+        clusterCollection.clear();
+        for (int i = 0; i < lastKnownMarkers.size(); ++i) {
+            addFeature(lastKnownMarkers.get(i), getChildCount());
+        }
+    }
+
+    private void updateUserMarkersColor() {
+        if (userClusters) {
+            ArrayList<YamapMarker> lastKnownMarkers = new ArrayList<>();
+            for (int i = 0; i < getChildCount(); ++i) {
+                View obj = getChildAt(i);
+                if (obj instanceof YamapMarker) {
+                    YamapMarker marker = (YamapMarker) obj;
+                    lastKnownMarkers.add(marker);
+                }
+            }
+            clusterCollection.clear();
+            for (int i = 0; i < lastKnownMarkers.size(); ++i) {
+                addFeature(lastKnownMarkers.get(i), getChildCount());
+            }
+        }
+    }
+
     private void updateUserLocationIcon() {
         if (userLocationView != null) {
-            IconStyle userIconStyle = new IconStyle();
-            userIconStyle.setScale(userLocationIconScale);
-
             PlacemarkMapObject pin = userLocationView.getPin();
             PlacemarkMapObject arrow = userLocationView.getArrow();
             if (userLocationBitmap != null) {
-                pin.setIcon(ImageProvider.fromBitmap(userLocationBitmap), userIconStyle);
-                arrow.setIcon(ImageProvider.fromBitmap(userLocationBitmap), userIconStyle);
+                pin.setIcon(ImageProvider.fromBitmap(userLocationBitmap));
+                arrow.setIcon(ImageProvider.fromBitmap(userLocationBitmap));
             }
             CircleMapObject circle = userLocationView.getAccuracyCircle();
             if (userLocationAccuracyFillColor != 0) {
@@ -882,5 +860,74 @@ public class YamapView extends MapView implements UserLocationObjectListener, Ca
 
     @Override
     public void onTrafficExpired() {
+    }
+
+    @Override
+    public void onClusterAdded(@NonNull Cluster cluster) {
+        cluster.getAppearance().setIcon(new TextImageProvider(Integer.toString(cluster.getSize())));
+        cluster.addClusterTapListener(this);
+    }
+
+    @Override
+    public boolean onClusterTap(@NonNull Cluster cluster) {
+        fitMarkers(mapPlacemarksToPoints(cluster.getPlacemarks()));
+
+        return true;
+    }
+
+
+    private class TextImageProvider extends ImageProvider {
+        private static final float FONT_SIZE = 45;
+        private static final float MARGIN_SIZE = 9;
+        private static final float STROKE_SIZE = 9;
+
+        @Override
+        public String getId() {
+            return "text_" + text;
+        }
+
+        private final String text;
+
+        @Override
+        public Bitmap getImage() {
+            Paint textPaint = new Paint();
+            textPaint.setTextSize(FONT_SIZE);
+            textPaint.setTextAlign(Paint.Align.CENTER);
+            textPaint.setStyle(Paint.Style.FILL);
+            textPaint.setAntiAlias(true);
+
+            float widthF = textPaint.measureText(text);
+            Paint.FontMetrics textMetrics = textPaint.getFontMetrics();
+            float heightF = Math.abs(textMetrics.bottom) + Math.abs(textMetrics.top);
+            float textRadius = (float) Math.sqrt(widthF * widthF + heightF * heightF) / 2;
+            float internalRadius = textRadius + MARGIN_SIZE;
+            float externalRadius = internalRadius + STROKE_SIZE;
+
+            int width = (int) (2 * externalRadius + 0.5);
+
+            Bitmap bitmap = Bitmap.createBitmap(width, width, Bitmap.Config.ARGB_8888);
+            Canvas canvas = new Canvas(bitmap);
+
+            Paint backgroundPaint = new Paint();
+            backgroundPaint.setAntiAlias(true);
+            backgroundPaint.setColor(clusterColor);
+            canvas.drawCircle(width / 2, width / 2, externalRadius, backgroundPaint);
+
+            backgroundPaint.setColor(Color.WHITE);
+            canvas.drawCircle(width / 2, width / 2, internalRadius, backgroundPaint);
+
+            canvas.drawText(
+                text,
+                width / 2,
+                width / 2 - (textMetrics.ascent + textMetrics.descent) / 2,
+                textPaint
+            );
+
+            return bitmap;
+        }
+
+        public TextImageProvider(String text) {
+            this.text = text;
+        }
     }
 }

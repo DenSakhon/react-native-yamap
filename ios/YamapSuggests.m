@@ -16,6 +16,7 @@
     YMKPoint* northEastPoint = [YMKPoint pointWithLatitude:90.0 longitude:180.0];
     defaultBoundingBox = [YMKBoundingBox boundingBoxWithSouthWest:southWestPoint northEast:northEastPoint];
     suggestOptions = [YMKSuggestOptions suggestOptionsWithSuggestTypes: YMKSuggestTypeGeo userPosition:nil suggestWords:true];
+    searchManager = [[YMKSearch sharedInstance] createSearchManagerWithSearchManagerType:YMKSearchSearchManagerTypeOnline];
 
     return self;
 }
@@ -39,12 +40,6 @@ NSString* ERR_SUGGEST_FAILED = @"YANDEX_SUGGEST_ERR_SUGGEST_FAILED";
 - (YMKSearchSuggestSession*_Nonnull)getSuggestClient {
     if (suggestClient) {
         return suggestClient;
-    }
-    
-    if (!searchManager) {
-        runOnMainQueueWithoutDeadlocking(^{
-            self->searchManager = [[YMKSearch sharedInstance] createSearchManagerWithSearchManagerType:YMKSearchSearchManagerTypeOnline];
-        });
     }
 
     runOnMainQueueWithoutDeadlocking(^{
